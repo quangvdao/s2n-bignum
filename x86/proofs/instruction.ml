@@ -371,6 +371,7 @@ let instruction_INDUCTION,instruction_RECURSION = define_type
    | VPMADDUBSW operand operand operand
    | VPMADDWD operand operand operand
    | VPMOVMSKB operand operand
+   | VPMOVSXBW operand operand
    | VPMOVSXBD operand operand
    | VPMOVZXBD operand operand
    | VPMOVZXBW operand operand
