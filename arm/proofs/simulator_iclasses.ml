@@ -325,6 +325,21 @@ let iclasses =
   "0x0011110001xxxx001001xxxxxxxxxx";
   "0x00111100001xxx001001xxxxxxxxxx";
 
+  (*** SHSUB ***)
+  (* Architectural arrangements, including low and high register numbers. *)
+  "00001110001000100010010000100000"; (* shsub v0.8b,v1.8b,v2.8b *)
+  "01001110001111010010011111011111"; (* shsub v31.16b,v30.16b,v29.16b *)
+  "00001110011001010010010010000011"; (* shsub v3.4h,v4.4h,v5.4h *)
+  "01001110011110100010011101111100"; (* shsub v28.8h,v27.8h,v26.8h *)
+  "00001110101010000010010011100110"; (* shsub v6.2s,v7.2s,v8.2s *)
+  "01001110101101110010011100011001"; (* shsub v25.4s,v24.4s,v23.4s *)
+  (* An exact instruction emitted by Akita's i32 NEON Montgomery kernel. *)
+  "01001110101000100010010010100010"; (* shsub v2.4s,v5.4s,v2.4s *)
+  (* size = 0b11 is unallocated for both 64-bit and 128-bit vectors. *)
+  "00001110111000100010010010100010";
+  "01001110111000100010010010100010";
+  "0x001110xx1xxxxx001001xxxxxxxxxx";
+
   (*** SSHR (make sure immh is nonzero) ***)
   "0x00111101xxxxxx000001xxxxxxxxxx";
   "0x001111001xxxxx000001xxxxxxxxxx";
