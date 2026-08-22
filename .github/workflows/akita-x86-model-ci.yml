@@ -1,0 +1,45 @@
+name: Akita x86 model validation
+
+on:
+  push:
+    branches:
+      - akita/ci-x86-models
+
+permissions:
+  contents: read
+
+env:
+  HOLLIGHT_COMMIT: b19af6934759eed622d7aca25092367f81656eee
+
+jobs:
+  x86-sematest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout model branch
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install libpcre2-dev ocaml libstring-shellquote-perl libgmp-dev xdot
+          wget https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh
+          chmod +x install.sh
+          echo "/usr/local/bin" | sh ./install.sh
+          opam init --disable-sandboxing
+
+      - name: Build pinned HOL Light
+        run: |
+          git clone https://github.com/jrh13/hol-light.git
+          cd hol-light
+          git checkout "$HOLLIGHT_COMMIT"
+          make switch-5
+          eval "$(opam env)"
+          HOLLIGHT_USE_MODULE=1 make
+
+      - name: Run native x86 cosimulation
+        run: |
+          export HOLDIR="$PWD/hol-light"
+          cd x86
+          make sematest
