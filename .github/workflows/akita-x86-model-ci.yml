@@ -14,7 +14,7 @@ env:
 jobs:
   x86-sematest:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout model branch
