@@ -170,6 +170,8 @@
 : vpmullw$
 : vpor$
 : vpshufb$
+: vpshufhw$
+: vpshuflw$
 : vpslld$
 : vpsllvd$
 : vpsllq$
