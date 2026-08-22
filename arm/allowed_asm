@@ -63,6 +63,7 @@
 : ld1r$
 : ld1r.2d$
 : ld3$
+: ld4$
 : ldp$
 : ldr$
 : ldrb$
@@ -139,6 +140,7 @@
 : sshr$
 : sshr.8h$
 : st3$
+: st4$
 : stp$
 : str$
 : strb$
