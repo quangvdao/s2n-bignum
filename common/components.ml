@@ -2207,6 +2207,75 @@ let WRITE_MEMORY_TRIPLES_SPLIT = prove
     (h < 2 EXP 128 /\ l < 2 EXP 128 ==> l + 2 EXP 128 * h < 2 EXP 256)`] THEN
   CONV_TAC WORD_BLAST);;
 
+let READ_MEMORY_QUADRUPLES_SPLIT = prove
+ (`(!m x s:S.
+        read (m :> wbytes x) s :256 word =
+        word_join (read (m :> bytes64 (word_add x (word 24))) s)
+          ((word_join (read (m :> bytes64 (word_add x (word 16))) s)
+            (word_join (read (m :> bytes64 (word_add x (word 8))) s)
+                       (read (m :> bytes64 x) s):int128)):192 word)) /\
+   (!m x s:S.
+        read (m :> wbytes x) s :512 word =
+        word_join (read (m :> bytes128 (word_add x (word 48))) s)
+          ((word_join (read (m :> bytes128 (word_add x (word 32))) s)
+            (word_join (read (m :> bytes128 (word_add x (word 16))) s)
+                       (read (m :> bytes128 x) s):int256)):384 word))`,
+  REWRITE_TAC[GSYM VAL_EQ] THEN
+  SIMP_TAC[VAL_WORD_JOIN_SIMPLE; DIMINDEX_64; DIMINDEX_128; DIMINDEX_256;
+   DIMINDEX_512; ARITH; DIMINDEX_CONV `dimindex(:192)`;
+   DIMINDEX_CONV `dimindex(:384)`] THEN
+  REWRITE_TAC[BYTES64_WBYTES; BYTES128_WBYTES] THEN
+  REWRITE_TAC[READ_COMPONENT_COMPOSE; VAL_READ_WBYTES] THEN
+  CONV_TAC(ONCE_DEPTH_CONV DIMINDEX_CONV) THEN CONV_TAC NUM_REDUCE_CONV THEN
+  REWRITE_TAC[ARITH_RULE
+   `32 = 8 + 8 + 8 + 8 /\ 64 = 16 + 16 + 16 + 16`] THEN
+  REWRITE_TAC[READ_BYTES_COMBINE] THEN REWRITE_TAC[GSYM WORD_ADD_ASSOC] THEN
+  CONV_TAC(DEPTH_CONV WORD_NUM_RED_CONV) THEN ARITH_TAC);;
+
+let WRITE_MEMORY_QUADRUPLES_SPLIT = prove
+ (`(!m x y s:S.
+     valid_component m
+      ==> write (m :> wbytes x) (y:256 word) s =
+          write (m :> bytes64 x) (word_subword y (0,64))
+            (write (m :> bytes64 (word_add x (word 8)))
+              (word_subword y (64,64))
+              (write (m :> bytes64 (word_add x (word 16)))
+                (word_subword y (128,64))
+                (write (m :> bytes64 (word_add x (word 24)))
+                  (word_subword y (192,64)) s)))) /\
+   (!m x y s:S.
+     valid_component m
+      ==> write (m :> wbytes x) (y:512 word) s =
+          write (m :> bytes128 x) (word_subword y (0,128))
+            (write (m :> bytes128 (word_add x (word 16)))
+              (word_subword y (128,128))
+              (write (m :> bytes128 (word_add x (word 32)))
+                (word_subword y (256,128))
+                (write (m :> bytes128 (word_add x (word 48)))
+                  (word_subword y (384,128)) s))))`,
+  REWRITE_TAC[WRITE_COMPONENT_COMPOSE] THEN
+  REWRITE_TAC[valid_component] THEN REPEAT STRIP_TAC THEN
+  ASM_REWRITE_TAC[bytes128; bytes64; wbytes; WRITE_COMPONENT_COMPOSE;
+                  asword; through; read; write] THEN
+  REWRITE_TAC[GSYM WRITE_BYTES_COMBINE; ARITH_ADD; ARITH_SUC] THEN
+  CONV_TAC(ONCE_DEPTH_CONV DIMINDEX_CONV) THEN
+  CONV_TAC(ONCE_DEPTH_CONV(NUM_MULT_CONV ORELSEC NUM_DIV_CONV)) THEN
+  AP_THM_TAC THEN AP_TERM_TAC THEN AP_THM_TAC THEN AP_TERM_TAC THEN
+  SIMP_TAC[VAL_BOUND_64; VAL_BOUND_128; MOD_LT; ARITH_RULE
+   `(h < 2 EXP 64 /\ l < 2 EXP 64
+      ==> l + 2 EXP 64 * h < 2 EXP 128) /\
+    (h < 2 EXP 64 /\ l < 2 EXP 128
+      ==> l + 2 EXP 128 * h < 2 EXP 192) /\
+    (h < 2 EXP 64 /\ l < 2 EXP 192
+      ==> l + 2 EXP 192 * h < 2 EXP 256) /\
+    (h < 2 EXP 128 /\ l < 2 EXP 128
+      ==> l + 2 EXP 128 * h < 2 EXP 256) /\
+    (h < 2 EXP 128 /\ l < 2 EXP 256
+      ==> l + 2 EXP 256 * h < 2 EXP 384) /\
+    (h < 2 EXP 128 /\ l < 2 EXP 384
+      ==> l + 2 EXP 384 * h < 2 EXP 512)`] THEN
+  CONV_TAC WORD_BLAST);;
+
 let READ_MEMORY_BYTES_TRIVIAL = prove(
   `forall (z:int64) (s:A) m. read (m :> bytes (z,0)) s = 0`,
   REWRITE_TAC[READ_COMPONENT_COMPOSE] THEN

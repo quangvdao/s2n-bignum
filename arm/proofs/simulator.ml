@@ -104,6 +104,86 @@ loadt "arm/proofs/simulator_iclasses.ml";;
 
 check_insns();;
 
+(* Deterministic coverage for the LD4/ST4 forms used by Akita and their
+   architectural boundaries. The randomized memory simulation below checks
+   the semantics against hardware; these checks make the exact production
+   encodings and reserved fields reproducible on every model load. *)
+let check_decode_eq tm expected =
+  let th = DECODE_CONV tm in
+  if not (aconv (rhs (concl th)) expected) then
+    failwith ("check_decode_eq: " ^ string_of_term tm);;
+
+let check_decode_rejected tm =
+  let th = PURE_DECODE_OPTION_CONV tm in
+  if not (aconv (rhs (concl th))
+                `NONE:(armstate->armstate->bool)option`) then
+    failwith ("check_decode_rejected: " ^ string_of_term tm);;
+
+let check_ld4_st4_decodes () =
+  check_decode_eq `decode (word 0x4c400800:int32)`
+    `SOME (arm_LD4 [Q0;Q1;Q2;Q3] X0 No_Offset 128 32)`;
+  check_decode_eq `decode (word 0x4c000420:int32)`
+    `SOME (arm_ST4 [Q0;Q1;Q2;Q3] X1 No_Offset 128 16)`;
+  check_decode_eq `decode (word 0x4c40045c:int32)`
+    `SOME (arm_LD4 [Q28;Q29;Q30;Q31] X2 No_Offset 128 16)`;
+  check_decode_eq `decode (word 0x4c00047f:int32)`
+    `SOME (arm_ST4 [Q31;Q0;Q1;Q2] X3 No_Offset 128 16)`;
+  check_decode_eq `decode (word 0x4cdf08cc:int32)`
+    `SOME (arm_LD4 [Q12;Q13;Q14;Q15] X6
+                   (Postimmediate_Offset (word 64)) 128 32)`;
+  check_decode_eq `decode (word 0x4c8808f0:int32)`
+    `SOME (arm_ST4 [Q16;Q17;Q18;Q19] X7
+                   (Postreg_Offset X8) 128 32)`;
+  (* Exact writeback forms emitted in optimized Akita NTT loops. *)
+  check_decode_eq `decode (word 0x4c9f0958:int32)`
+    `SOME (arm_ST4 [Q24;Q25;Q26;Q27] X10
+                   (Postimmediate_Offset (word 64)) 128 32)`;
+  check_decode_eq `decode (word 0x4c9f0577:int32)`
+    `SOME (arm_ST4 [Q23;Q24;Q25;Q26] X11
+                   (Postimmediate_Offset (word 64)) 128 16)`;
+  check_decode_eq `decode (word 0x4cda0568:int32)`
+    `SOME (arm_LD4 [Q8;Q9;Q10;Q11] X11
+                   (Postreg_Offset X26) 128 16)`;
+  check_decode_eq `decode (word 0x0c400934:int32)`
+    `SOME (arm_LD4 [Q20;Q21;Q22;Q23] X9 No_Offset 64 32)`;
+  (* Q=0,size=3 is reserved in both addressing classes. *)
+  check_decode_rejected `decode (word 0x0c400d34:int32)`;
+  check_decode_rejected `decode (word 0x0cdf0ccc:int32)`;;
+
+check_ld4_st4_decodes();;
+
+(* A small byte-lane oracle makes the stream order visible independently of
+   the decoder. Bytes 0,4,8,12 go to stream 0; bytes 1,5,9,13 go to stream 1,
+   and so on. The second conjunct checks the inverse ST4 interleave. *)
+let LD4_ST4_LANE_ORDER_TEST = prove
+ (`word_deinterleave 4 8
+      (word 0x0f0e0d0c0b0a09080706050403020100:int128) =
+    [word 0x0c080400:int32; word 0x0d090501:int32;
+     word 0x0e0a0602:int32; word 0x0f0b0703:int32] /\
+   word_interleave 8
+      [word 0x0c080400:int32; word 0x0d090501:int32;
+       word 0x0e0a0602:int32; word 0x0f0b0703:int32] =
+    (word 0x0f0e0d0c0b0a09080706050403020100:int128)`,
+  REWRITE_TAC[WORD_DEINTERLEAVE_CLAUSES] THEN
+  CONV_TAC(DEPTH_CONV apply_extra_word_convs) THEN REWRITE_TAC[]);;
+
+(* These are the non-data parts of the instruction contract used by the
+   LD4/ST4 definitions below. In particular, register post-index reads Xm
+   from the instruction's input state. *)
+let LD4_ST4_METADATA_TEST = prove
+ (`4 * 64 DIV 8 = 32 /\ 4 * 128 DIV 8 = 64 /\
+   offset_writeback (Postimmediate_Offset (word 32)) s = word 32 /\
+   offset_writeback (Postimmediate_Offset (word 64)) s = word 64 /\
+   offset_writeback (Postreg_Offset Rm) s =
+     read (Rm:(armstate,int64)component) s`,
+  REWRITE_TAC[offset_writeback] THEN CONV_TAC NUM_REDUCE_CONV);;
+
+let LD4_Q0_ZERO_EXTENDS_TEST = prove
+ (`!x:int64.
+     (word_subword (word_zx x:int128) (64,64):int64) = word 0`,
+  GEN_TAC THEN MATCH_MP_TAC WORD_SUBWORD_ZX_TRIVIAL THEN
+  CONV_TAC(DEPTH_CONV DIMINDEX_CONV) THEN ARITH_TAC);;
+
 (* ------------------------------------------------------------------------- *)
 (* Run a random example.                                                     *)
 (* ------------------------------------------------------------------------- *)
@@ -192,7 +272,8 @@ and tac_after memop =
  *** it can be modified in between.
  ***)
 
-let cosimulate_instructions (memopidx: int option) icodes =
+let cosimulate_instructions_with_state
+    (memopidx: int option) icodes input_state =
   let icodestring =
     end_itlist (fun s t -> s^","^t) (map string_of_num_hex icodes) in
   let _ =
@@ -208,8 +289,6 @@ let cosimulate_instructions (memopidx: int option) icodes =
 
   let ibyteterm =
     mk_flist(map (curry mk_comb `word:num->byte` o mk_numeral) ibytes) in
-
-  let input_state = random_regstate() in
 
   let outfile = Filename.temp_file "armsimulator" ".out" in
 
@@ -270,6 +349,9 @@ let cosimulate_instructions (memopidx: int option) icodes =
   else
     let decoded = mk_flist(map mk_numeral icodes) in
     decoded,not(can ARM_MK_EXEC_RULE(REFL ibyteterm));;
+
+let cosimulate_instructions memopidx icodes =
+  cosimulate_instructions_with_state memopidx icodes (random_regstate());;
 
 (*** Pick random instances from register-to-register iclasses and run ***)
 
@@ -571,10 +653,85 @@ let cosimulate_ldst3() =
   else
     [add_Xn_SP_imm rn stackoff; code; sub_Xn_SP_Xn rn];;
 
+let cosimulate_ldst4() =
+  let datasize = Random.int 2
+  and isld = Random.int 2
+  and rn = Random.int 32 in
+  let esize = if datasize = 0 then Random.int 3 else Random.int 4 in
+  let rt = if Random.bool() then 29 + Random.int 3 else Random.int 32 in
+  let someoffset = Random.int 2 in
+  let regoffr = Random.int 32 in
+  let regoff =
+    if someoffset = 0 then 0
+    else if regoffr = rn || rn = 31 || Random.bool() then 31
+    else regoffr in
+  let footprint = 32 * (datasize + 1) in
+  let stackoff =
+    if rn = 31 then Random.int ((256 - footprint) / 16 + 1) * 16
+    else Random.int (257 - footprint) in
+  let postinc = someoffset * footprint in
+  let code =
+    pow2 30 */ num datasize +/
+    pow2 24 */ num 0b001100 +/
+    pow2 23 */ num someoffset +/
+    pow2 22 */ num isld +/
+    pow2 16 */ num regoff +/
+    pow2 10 */ num esize +/
+    pow2 5 */ num rn +/
+    num rt in
+  if rn = 31 then
+    [add_Xn_SP_imm 31 stackoff; code;
+     sub_Xn_SP_imm 31 (stackoff + postinc)]
+  else
+    [add_Xn_SP_imm rn stackoff; code; sub_Xn_SP_Xn rn];;
+
+(* A fixed native roundtrip with byte-distinct source memory. Unlike the
+   randomized stream, this always exercises the exact Akita Q=1 4S base
+   encodings and would expose a disagreement in lane order. *)
+let tagged_word128 block =
+  itlist (fun byte acc -> num byte +/ num 256 */ acc)
+         (rev ((16 * block)--(16 * block + 15))) num_0;;
+
+let ld4_st4_tagged_state =
+  map (fun i -> num (i + 1)) (0--30) @ [num 0] @
+  map (fun i -> num (0x100 + i)) (0--31) @
+  map tagged_word128 (0--15);;
+
+let check_ld4_st4_native name memopidx codes =
+  let _,ok = cosimulate_instructions_with_state
+    (Some memopidx) codes ld4_st4_tagged_state in
+  if not ok then failwith ("check_ld4_st4_native: " ^ name);;
+
+let run_ld4_st4_preflights () =
+  (* Exact Akita Q=1 4S base forms. Distinct source bytes expose both the LD4
+     deinterleave and the inverse ST4 interleave order. *)
+  let codes =
+    [add_Xn_SP_imm 0 0;
+     add_Xn_SP_imm 1 64;
+     num 0x4c400800;
+     num 0x4c000820;
+     sub_Xn_SP_Xn 0;
+     sub_Xn_SP_Xn 1] in
+  check_ld4_st4_native "tagged roundtrip" 2 codes;
+  (* Q=0 loads only 64 bits into each destination. Full-register comparison
+     with nonzero tagged inputs checks that the upper 64 bits become zero;
+     the immediate writeback must advance X6 by the 32-byte footprint. *)
+  check_ld4_st4_native "Q=0 upper-zero and post-immediate #32" 1
+    [add_Xn_SP_imm 6 0; num 0x0cdf08cc; sub_Xn_SP_Xn 6];
+  (* Exact optimized Akita Q=1 ST4 post-immediate form and its 64-byte
+     writeback. *)
+  check_ld4_st4_native "Akita ST4 post-immediate #64" 1
+    [add_Xn_SP_imm 10 0; num 0x4c9f0958; sub_Xn_SP_Xn 10];
+  (* Exact optimized Akita register-post-index LD4. Setting X26 to 64 checks
+     that writeback reads the original Xm value. *)
+  check_ld4_st4_native "Akita LD4 post-register X26" 2
+    [add_Xn_SP_imm 11 0; movz_Xn_imm 26 64; num 0x4cda0568;
+     sub_Xn_SP_Xn 11];;
+
 let memclasses =
    [cosimulate_ldstr; cosimulate_ldstp; cosimulate_ldst_12;
     cosimulate_ldst_1_2reg; cosimulate_ldstrb; cosimulate_ld1r;
-    cosimulate_ldst3; cosimulate_ldstu
+    cosimulate_ldst3; cosimulate_ldst4; cosimulate_ldstu
     ];;
 
 let run_random_memopsimulation() =
@@ -619,6 +776,8 @@ let rec run_random_simulations start_t =
   else Some (decoded,result);;
 
 Random.self_init();;
+
+run_ld4_st4_preflights();;
 
 let start_t = Sys.time() (* unit is sec *) in
   match run_random_simulations start_t with
