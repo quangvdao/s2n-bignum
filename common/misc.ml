@@ -1465,7 +1465,12 @@ let WORD_DEINTERLEAVE_CLAUSES = prove
    (word_deinterleave:num->num->M word->(N word)list) 3 n z =
    [word_subdeinterleave 3 n z 0;
     word_subdeinterleave 3 n z 1;
-    word_subdeinterleave 3 n z 2]`,
+    word_subdeinterleave 3 n z 2] /\
+   (word_deinterleave:num->num->M word->(N word)list) 4 n z =
+   [word_subdeinterleave 4 n z 0;
+    word_subdeinterleave 4 n z 1;
+    word_subdeinterleave 4 n z 2;
+    word_subdeinterleave 4 n z 3]`,
   REWRITE_TAC[word_deinterleave; LIST_OF_SEQ_CLAUSES]);;
 
 (* ------------------------------------------------------------------------- *)

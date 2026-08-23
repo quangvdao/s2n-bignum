@@ -98,6 +98,12 @@ let arm_ldst3 = new_definition `arm_ldst3 ld Rt1 =
   let Rt2:(5 word) = word ((val Rt1 + 1) MOD 32) in
   let Rt3:(5 word) = word ((val Rt1 + 2) MOD 32) in
   (if ld then arm_LD3 else arm_ST3) [QREG' Rt1; QREG' Rt2; QREG' Rt3]`;;
+let arm_ldst4 = new_definition `arm_ldst4 ld Rt1 =
+  let Rt2:(5 word) = word ((val Rt1 + 1) MOD 32) in
+  let Rt3:(5 word) = word ((val Rt1 + 2) MOD 32) in
+  let Rt4:(5 word) = word ((val Rt1 + 3) MOD 32) in
+  (if ld then arm_LD4 else arm_ST4)
+    [QREG' Rt1; QREG' Rt2; QREG' Rt3; QREG' Rt4]`;;
 
 (* The 'AdvSimdExpandImm' shared function in the A64 ISA specification.
    This definition takes one 8-bit word and expands it to 64 bit according to
@@ -449,6 +455,24 @@ let decode = new_definition `!w:int32. decode w =
                            else Postreg_Offset (XREG' Rm))
            datasize esize)
 
+  // LD4/ST4 (multiple structures), 4 registers
+  // Post-immediate and post-register offset
+  | [0:1; q; 0b0011001:7; is_ld; 0:1; Rm:5; 0b0000:4; size:2; Rn:5; Rt:5] ->
+    if size = word 0b11 /\ ~q then NONE else
+    let esize = 8 * 2 EXP (val size) in
+    let datasize = if q then 128 else 64 in
+    let offset = if q then word 64 else word 32 in
+    SOME (arm_ldst4 is_ld Rt (XREG_SP Rn)
+           (if val Rm = 31 then Postimmediate_Offset offset
+                           else Postreg_Offset (XREG' Rm))
+           datasize esize)
+  // No offset
+  | [0:1; q; 0b0011000:7; is_ld; 0b000000:6; 0b0000:4; size:2; Rn:5; Rt:5] ->
+    if size = word 0b11 /\ ~q then NONE else
+    let esize = 8 * 2 EXP (val size) in
+    let datasize = if q then 128 else 64 in
+    SOME (arm_ldst4 is_ld Rt (XREG_SP Rn) No_Offset datasize esize)
+
   // SIMD operations
   | [0:1; q; u; 0b01110:5; size:2; 1:1; Rm:5; 0b100001:6; Rn:5; Rd:5] ->
     // ADD and SUB
@@ -458,6 +482,14 @@ let decode = new_definition `!w:int32. decode w =
       let datasize = if q then 128 else 64 in
       SOME ((if u then arm_SUB_VEC else arm_ADD_VEC)
             (QREG' Rd) (QREG' Rn) (QREG' Rm) esize datasize)
+
+  | [0:1; q; 0b001110:6; size:2; 1:1; Rm:5; 0b001001:6; Rn:5; Rd:5] ->
+    // SHSUB (signed halving subtract). The 64-bit element form is unallocated.
+    if size = (word 0b11:(2)word) then NONE
+    else
+      let esize = 8 * (2 EXP (val size)) in
+      let datasize = if q then 128 else 64 in
+      SOME (arm_SHSUB_VEC (QREG' Rd) (QREG' Rn) (QREG' Rm) esize datasize)
 
   | [0:1; q; 0b101110:6; size:2; 1:1; Rm:5; 0b010001:6; Rn:5; Rd:5] ->
     // USHL (vector, per-element variable shift)
@@ -1432,7 +1464,7 @@ let ALIAS_CONV =
 
 open Compute;;
 
-let PURE_DECODE_CONV =
+let PURE_DECODE_OPTION_CONV =
 
   let custom_word_red_conv_list =
     (* No WORD_IWORD_CONV *)
@@ -1467,7 +1499,7 @@ let PURE_DECODE_CONV =
     add_thms [arm_adcop; arm_addop; arm_adv_simd_expand_imm;
               arm_bfmop; arm_ccop; arm_csop;
               arm_ldst; arm_ldst_q; arm_ldst_d; arm_ldstb; arm_ldstp; arm_ldstp_q; arm_ldstp_d;
-              arm_ldst2; arm_ldstp_2q; arm_ldst3] rw;
+              arm_ldst2; arm_ldstp_2q; arm_ldst3; arm_ldst4] rw;
     (* .. that have bitmatch exprs inside *)
     List.iter (fun def_th ->
         let Some (conceal_th, opaque_const, opaque_arity, opaque_def, opaque_conv) =
@@ -1503,11 +1535,16 @@ let PURE_DECODE_CONV =
   let the_conv = WEAK_CBV_CONV decode_rw in
   fun t ->
     try
-      let th = the_conv t in
-      let c = concl th in (* c should be: `decode .. = SOME ...` *)
-      let r,_ = dest_comb (rhs c) in
-      if is_const r && name_of r = "SOME" then th else failwith ""
-    with Failure _ -> failwith ("PURE_DECODE_CONV: " ^ (string_of_term t));;
+      the_conv t
+    with Failure _ ->
+      failwith ("PURE_DECODE_OPTION_CONV: " ^ (string_of_term t));;
+
+let PURE_DECODE_CONV t =
+  let th = PURE_DECODE_OPTION_CONV t in
+  try
+    let r,_ = dest_comb (rhs (concl th)) in
+    if is_const r && name_of r = "SOME" then th else failwith ""
+  with Failure _ -> failwith ("PURE_DECODE_CONV: " ^ (string_of_term t));;
 
 let DECODE_CONV tm =
   let th = PURE_DECODE_CONV tm in
