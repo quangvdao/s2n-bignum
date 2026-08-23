@@ -917,6 +917,17 @@ let decode_aux = new_definition `!pfxs rex l. decode_aux pfxs rex l =
            | (T, Rep0, SG0) -> SOME(VMOVDQA (mmreg reg sz) (simd_of_RM sz rm),l)
            | (F, RepZ, SG0) -> SOME(VMOVDQU (mmreg reg sz) (simd_of_RM sz rm),l)
            | _ -> NONE)
+        | [0x70:8] -> if word_not v = (word 0b1111:4 word) then
+          (let sz = vexL_size L in
+           read_ModRM rex l >>= \((reg,rm),l).
+           read_imm Byte l >>= \(imm8,l).
+           match pfxs with
+           | (F, RepZ, SG0) ->
+             SOME(VPSHUFHW (mmreg reg sz) (simd_of_RM sz rm) imm8,l)
+           | (F, RepNZ, SG0) ->
+             SOME(VPSHUFLW (mmreg reg sz) (simd_of_RM sz rm) imm8,l)
+           | _ -> NONE)
+          else NONE
         | [0x7e:8] -> if word_not v = (word 0b1111:4 word) then
           (if L then NONE else
           (read_ModRM rex l >>= \((reg,rm),l).
